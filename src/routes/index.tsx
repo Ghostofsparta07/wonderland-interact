@@ -208,8 +208,6 @@ function Studio() {
 
   if (!mode) return <ModePicker onPick={(m) => { setMode(m); setLoadedId(null); setFields(emptyPrompt); }} />;
 
-  const m = MODES[mode];
-
   return (
     <div className="min-h-screen relative">
       <div className="grain-overlay" />
