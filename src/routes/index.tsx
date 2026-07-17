@@ -14,16 +14,32 @@ export const Route = createFileRoute("/")({
   component: Studio,
 });
 
+interface PromptVersion {
+  fields: PromptFields;
+  savedAt: number;
+  note?: string;
+}
+
 interface SavedPrompt {
   id: string;
   name: string;
   mode: ModeId;
   fields: PromptFields;
   createdAt: number;
+  updatedAt: number;
+  versions: PromptVersion[];
 }
 
+const seedPrompt = (
+  p: Omit<SavedPrompt, "updatedAt" | "versions"> & { versions?: PromptVersion[] },
+): SavedPrompt => ({
+  ...p,
+  updatedAt: p.createdAt,
+  versions: p.versions ?? [],
+});
+
 const SEED: SavedPrompt[] = [
-  {
+  seedPrompt({
     id: "seed-1", mode: "development", name: "API Endpoint Designer",
     createdAt: Date.now() - 1000 * 60 * 60 * 24 * 6,
     fields: {
@@ -37,8 +53,8 @@ const SEED: SavedPrompt[] = [
       successCriteria: "A frontend engineer can implement the client without asking follow-up questions",
       negativeInstructions: "No offset pagination. No untyped `any`. Do not invent auth flows.",
     },
-  },
-  {
+  }),
+  seedPrompt({
     id: "seed-2", mode: "writing", name: "Founder Story Essay",
     createdAt: Date.now() - 1000 * 60 * 60 * 24 * 4,
     fields: {
@@ -52,8 +68,8 @@ const SEED: SavedPrompt[] = [
       successCriteria: "A reader trusts the founder within the first sentence.",
       negativeInstructions: "No 'ever since I was a kid…'. No LinkedIn cadence. No listing companies.",
     },
-  },
-  {
+  }),
+  seedPrompt({
     id: "seed-3", mode: "design", name: "SaaS Landing Rebrand",
     createdAt: Date.now() - 1000 * 60 * 60 * 24 * 3,
     fields: {
@@ -67,8 +83,8 @@ const SEED: SavedPrompt[] = [
       successCriteria: "Feels like a tool a principal engineer would put in their bookmarks bar.",
       negativeInstructions: "No purple gradient. No 3D blob. No 'AI-powered' in the hero.",
     },
-  },
-  {
+  }),
+  seedPrompt({
     id: "seed-4", mode: "debugging", name: "Intermittent 500 Triage",
     createdAt: Date.now() - 1000 * 60 * 60 * 24 * 2,
     fields: {
@@ -82,8 +98,8 @@ const SEED: SavedPrompt[] = [
       successCriteria: "Root cause identified with a reproducible failing test",
       negativeInstructions: "No speculation without a supporting log line. No 'have you tried restarting'.",
     },
-  },
-  {
+  }),
+  seedPrompt({
     id: "seed-5", mode: "business", name: "Q3 Board Update",
     createdAt: Date.now() - 1000 * 60 * 60 * 24,
     fields: {
@@ -97,20 +113,100 @@ const SEED: SavedPrompt[] = [
       successCriteria: "A board member can skim in 90 seconds and know exactly what to ask next.",
       negativeInstructions: "No 'synergy', 'leverage', 'unlock'. No vanity metrics. No hedging.",
     },
-  },
+  }),
 ];
+
+// Ensure prompts loaded from an older localStorage shape have the version fields.
+const migrate = (list: SavedPrompt[]): SavedPrompt[] =>
+  list.map((p) => ({
+    ...p,
+    updatedAt: p.updatedAt ?? p.createdAt,
+    versions: p.versions ?? [],
+  }));
+
+function fieldsEqual(a: PromptFields, b: PromptFields) {
+  return (Object.keys(a) as (keyof PromptFields)[]).every((k) => a[k] === b[k]);
+}
 
 function Studio() {
   const [mode, setMode] = useState<ModeId | null>(null);
   const [fields, setFields] = useState<PromptFields>(emptyPrompt);
-  const [saved, setSaved] = useLocalStorage<SavedPrompt[]>("promptsmith.saved.v1", SEED);
+  const [rawSaved, setSaved] = useLocalStorage<SavedPrompt[]>("promptsmith.saved.v1", SEED);
+  const saved = useMemo(() => migrate(rawSaved), [rawSaved]);
   const [view, setView] = useState<"build" | "library">("build");
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-mode", mode ?? "default");
   }, [mode]);
 
-  if (!mode) return <ModePicker onPick={setMode} />;
+  const loaded = loadedId ? saved.find((p) => p.id === loadedId) ?? null : null;
+  const dirty = loaded ? !fieldsEqual(loaded.fields, fields) : false;
+
+  const saveNew = (name: string) => {
+    const now = Date.now();
+    const p: SavedPrompt = {
+      id: `p_${now}`,
+      name: name || `${MODES[mode!].name} prompt`,
+      mode: mode!,
+      fields,
+      createdAt: now,
+      updatedAt: now,
+      versions: [],
+    };
+    setSaved([p, ...saved]);
+    setLoadedId(p.id);
+  };
+
+  const updateLoaded = () => {
+    if (!loaded) return;
+    const now = Date.now();
+    setSaved(
+      saved.map((p) =>
+        p.id === loaded.id
+          ? {
+              ...p,
+              fields,
+              updatedAt: now,
+              // Push the previous fields onto the history stack (newest first).
+              versions: [{ fields: loaded.fields, savedAt: loaded.updatedAt }, ...p.versions].slice(0, 50),
+            }
+          : p,
+      ),
+    );
+  };
+
+  const restoreVersion = (promptId: string, versionIdx: number) => {
+    const p = saved.find((x) => x.id === promptId);
+    if (!p) return;
+    const v = p.versions[versionIdx];
+    if (!v) return;
+    const now = Date.now();
+    setSaved(
+      saved.map((x) =>
+        x.id === promptId
+          ? {
+              ...x,
+              fields: v.fields,
+              updatedAt: now,
+              versions: [
+                { fields: x.fields, savedAt: x.updatedAt, note: "before restore" },
+                ...x.versions,
+              ].slice(0, 50),
+            }
+          : x,
+      ),
+    );
+    // Also load into the builder.
+    setMode(p.mode);
+    setFields(v.fields);
+    setLoadedId(p.id);
+    setView("build");
+    setHistoryFor(null);
+  };
+
+  if (!mode) return <ModePicker onPick={(m) => { setMode(m); setLoadedId(null); setFields(emptyPrompt); }} />;
 
   const m = MODES[mode];
 
@@ -129,16 +225,12 @@ function Studio() {
           mode={mode}
           fields={fields}
           setFields={setFields}
-          onSave={(name) => {
-            const p: SavedPrompt = {
-              id: `p_${Date.now()}`,
-              name: name || `${m.name} prompt`,
-              mode,
-              fields,
-              createdAt: Date.now(),
-            };
-            setSaved([p, ...saved]);
-          }}
+          loaded={loaded}
+          dirty={dirty}
+          onSaveNew={saveNew}
+          onUpdate={updateLoaded}
+          onNew={() => { setLoadedId(null); setFields(emptyPrompt); }}
+          onOpenHistory={() => loaded && setHistoryFor(loaded.id)}
         />
       ) : (
         <Library
@@ -146,17 +238,30 @@ function Studio() {
           onLoad={(p) => {
             setMode(p.mode);
             setFields(p.fields);
+            setLoadedId(p.id);
             setView("build");
           }}
-          onDelete={(id) => setSaved(saved.filter((p) => p.id !== id))}
+          onDelete={(id) => {
+            setSaved(saved.filter((p) => p.id !== id));
+            if (loadedId === id) setLoadedId(null);
+          }}
+          onHistory={(id) => setHistoryFor(id)}
+        />
+      )}
+      {historyFor && (
+        <HistoryModal
+          prompt={saved.find((p) => p.id === historyFor)!}
+          onClose={() => setHistoryFor(null)}
+          onRestore={(idx) => restoreVersion(historyFor, idx)}
         />
       )}
     </div>
   );
+  void m;
 }
 
 /* ============================================================
-   MODE PICKER — the "landing" experience
+   MODE PICKER
    ============================================================ */
 function ModePicker({ onPick }: { onPick: (m: ModeId) => void }) {
   const [hover, setHover] = useState<ModeId | null>(null);
@@ -242,7 +347,7 @@ function ModePicker({ onPick }: { onPick: (m: ModeId) => void }) {
 }
 
 /* ============================================================
-   HEADER — bar that also shifts per mode
+   HEADER
    ============================================================ */
 function Header({
   mode, onChangeMode, view, setView, savedCount,
@@ -294,20 +399,26 @@ function Header({
 }
 
 /* ============================================================
-   BUILDER — 9-field prompt composer + live preview
+   BUILDER
    ============================================================ */
 function Builder({
-  mode, fields, setFields, onSave,
+  mode, fields, setFields, loaded, dirty, onSaveNew, onUpdate, onNew, onOpenHistory,
 }: {
   mode: ModeId;
   fields: PromptFields;
   setFields: (f: PromptFields) => void;
-  onSave: (name: string) => void;
+  loaded: SavedPrompt | null;
+  dirty: boolean;
+  onSaveNew: (name: string) => void;
+  onUpdate: () => void;
+  onNew: () => void;
+  onOpenHistory: () => void;
 }) {
   const m = MODES[mode];
   const [saveName, setSaveName] = useState("");
   const [copied, setCopied] = useState(false);
   const [showSaveInput, setShowSaveInput] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
 
   const assembled = useMemo(() => assemblePrompt(fields, mode), [fields, mode]);
   const wordCount = assembled.trim().split(/\s+/).filter(Boolean).length;
@@ -317,6 +428,11 @@ function Builder({
     await navigator.clipboard.writeText(assembled);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  const flashSaved = () => {
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 1500);
   };
 
   return (
@@ -330,6 +446,15 @@ function Builder({
           <h1 className="font-display text-4xl md:text-5xl leading-none">
             {m.vibe}
           </h1>
+          {loaded && (
+            <div className="mt-3 flex items-center gap-2 font-mono-ui text-[11px] text-muted-foreground">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+              editing <span className="text-foreground">{loaded.name}</span>
+              <span className="opacity-60">· {loaded.versions.length} prior version{loaded.versions.length === 1 ? "" : "s"}</span>
+              {dirty && <span className="text-accent">· unsaved changes</span>}
+              <button onClick={onNew} className="ml-2 underline hover:text-primary">start new</button>
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {m.presets.map((p) => (
@@ -394,18 +519,40 @@ function Builder({
                 </span>
               )}
             </pre>
-            <div className="px-4 py-3 border-t border-border bg-surface flex items-center gap-2">
-              {showSaveInput ? (
+            <div className="px-4 py-3 border-t border-border bg-surface flex items-center gap-2 flex-wrap">
+              {loaded ? (
+                <>
+                  <button
+                    onClick={() => { onUpdate(); flashSaved(); }}
+                    disabled={!dirty}
+                    className="text-xs font-mono-ui uppercase tracking-wider px-3 py-1.5 rounded-md bg-primary text-primary-foreground disabled:opacity-40 hover:opacity-90"
+                  >
+                    {justSaved ? "✓ new version" : "save version"}
+                  </button>
+                  <button
+                    onClick={onOpenHistory}
+                    className="text-xs font-mono-ui uppercase tracking-wider px-3 py-1.5 rounded-md border border-border hover:border-primary transition-colors"
+                  >
+                    history ({loaded.versions.length})
+                  </button>
+                  <button
+                    onClick={() => setShowSaveInput(true)}
+                    className="text-xs font-mono-ui uppercase tracking-wider px-3 py-1.5 rounded-md border border-border hover:border-primary transition-colors"
+                  >
+                    save as new
+                  </button>
+                </>
+              ) : showSaveInput ? (
                 <>
                   <input
                     autoFocus
                     value={saveName}
                     onChange={(e) => setSaveName(e.target.value)}
                     placeholder="Name this prompt…"
-                    className="flex-1 bg-transparent outline-none text-sm font-mono-ui placeholder:text-muted-foreground border-b border-border focus:border-primary py-1"
+                    className="flex-1 min-w-[160px] bg-transparent outline-none text-sm font-mono-ui placeholder:text-muted-foreground border-b border-border focus:border-primary py-1"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
-                        onSave(saveName);
+                        onSaveNew(saveName);
                         setSaveName("");
                         setShowSaveInput(false);
                       }
@@ -413,7 +560,7 @@ function Builder({
                   />
                   <button
                     onClick={() => {
-                      onSave(saveName);
+                      onSaveNew(saveName);
                       setSaveName("");
                       setShowSaveInput(false);
                     }}
@@ -430,6 +577,34 @@ function Builder({
                 >
                   + save to library
                 </button>
+              )}
+              {showSaveInput && loaded && (
+                <>
+                  <input
+                    autoFocus
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                    placeholder="Name the new prompt…"
+                    className="flex-1 min-w-[160px] bg-transparent outline-none text-sm font-mono-ui placeholder:text-muted-foreground border-b border-border focus:border-primary py-1"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        onSaveNew(saveName);
+                        setSaveName("");
+                        setShowSaveInput(false);
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      onSaveNew(saveName);
+                      setSaveName("");
+                      setShowSaveInput(false);
+                    }}
+                    className="text-xs font-mono-ui uppercase px-3 py-1.5 rounded-md bg-accent text-accent-foreground"
+                  >
+                    save copy
+                  </button>
+                </>
               )}
               <div className="ml-auto h-1 flex-1 max-w-[200px] bg-muted rounded-full overflow-hidden">
                 <div
@@ -459,7 +634,6 @@ function FieldRow({
   const filled = value.trim().length > 0;
   const ref = useRef<HTMLTextAreaElement>(null);
 
-  // autosize
   useEffect(() => {
     if (textarea && ref.current) {
       ref.current.style.height = "auto";
@@ -505,14 +679,15 @@ function FieldRow({
 }
 
 /* ============================================================
-   LIBRARY — saved prompts
+   LIBRARY
    ============================================================ */
 function Library({
-  saved, onLoad, onDelete,
+  saved, onLoad, onDelete, onHistory,
 }: {
   saved: SavedPrompt[];
   onLoad: (p: SavedPrompt) => void;
   onDelete: (id: string) => void;
+  onHistory: (id: string) => void;
 }) {
   return (
     <main className="max-w-[1400px] mx-auto px-6 py-8">
@@ -542,19 +717,29 @@ function Library({
                     {m.name}
                   </span>
                   <span className="font-mono-ui text-[10px] text-muted-foreground">
-                    {new Date(p.createdAt).toLocaleDateString()}
+                    {new Date(p.updatedAt).toLocaleDateString()}
                   </span>
                 </div>
                 <h3 className="font-display text-xl leading-tight">{p.name}</h3>
                 <p className="text-xs text-muted-foreground font-mono-ui line-clamp-4 leading-relaxed">
                   {preview}…
                 </p>
-                <div className="flex gap-2 mt-auto pt-2">
+                <div className="font-mono-ui text-[10px] text-muted-foreground">
+                  {p.versions.length} prior version{p.versions.length === 1 ? "" : "s"}
+                </div>
+                <div className="flex gap-2 mt-auto pt-2 flex-wrap">
                   <button
                     onClick={() => onLoad(p)}
                     className="flex-1 text-xs font-mono-ui uppercase tracking-wider px-3 py-2 rounded-md bg-primary text-primary-foreground hover:opacity-90"
                   >
                     open
+                  </button>
+                  <button
+                    onClick={() => onHistory(p.id)}
+                    disabled={p.versions.length === 0}
+                    className="text-xs font-mono-ui uppercase tracking-wider px-3 py-2 rounded-md border border-border hover:border-primary disabled:opacity-40"
+                  >
+                    history
                   </button>
                   <button
                     onClick={() => onDelete(p.id)}
@@ -569,5 +754,112 @@ function Library({
         </div>
       )}
     </main>
+  );
+}
+
+/* ============================================================
+   HISTORY MODAL
+   ============================================================ */
+function HistoryModal({
+  prompt, onClose, onRestore,
+}: {
+  prompt: SavedPrompt;
+  onClose: () => void;
+  onRestore: (versionIdx: number) => void;
+}) {
+  const [selected, setSelected] = useState<number>(0);
+  const m = MODES[prompt.mode];
+  const entries = [
+    { label: "current", savedAt: prompt.updatedAt, fields: prompt.fields, isCurrent: true },
+    ...prompt.versions.map((v, i) => ({
+      label: `version ${prompt.versions.length - i}`,
+      savedAt: v.savedAt,
+      fields: v.fields,
+      isCurrent: false,
+      note: v.note,
+      idx: i,
+    })),
+  ];
+  const active = entries[selected];
+  const activePreview = assemblePrompt(active.fields, prompt.mode);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-5xl max-h-[85vh] rounded-lg border border-border bg-card shadow-2xl flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div>
+            <p className="font-mono-ui text-[10px] uppercase tracking-[0.2em] text-primary flex items-center gap-2">
+              <span>{m.icon}</span> version history
+            </p>
+            <h2 className="font-display text-2xl mt-1">{prompt.name}</h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="font-mono-ui text-xs uppercase px-3 py-1.5 rounded-md border border-border hover:border-primary"
+          >
+            close
+          </button>
+        </div>
+
+        <div className="grid md:grid-cols-[240px_1fr] flex-1 min-h-0">
+          <aside className="border-r border-border overflow-y-auto">
+            {entries.map((e, i) => {
+              const activeCls = i === selected ? "bg-surface border-l-primary" : "border-l-transparent hover:bg-surface/50";
+              return (
+                <button
+                  key={i}
+                  onClick={() => setSelected(i)}
+                  className={`w-full text-left px-4 py-3 border-b border-border border-l-2 transition-colors ${activeCls}`}
+                >
+                  <div className="font-mono-ui text-[11px] uppercase tracking-wider text-foreground flex items-center gap-2">
+                    {e.label}
+                    {e.isCurrent && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary text-primary-foreground">
+                        live
+                      </span>
+                    )}
+                  </div>
+                  <div className="font-mono-ui text-[10px] text-muted-foreground mt-1">
+                    {new Date(e.savedAt).toLocaleString()}
+                  </div>
+                </button>
+              );
+            })}
+            {prompt.versions.length === 0 && (
+              <div className="px-4 py-6 font-mono-ui text-[11px] text-muted-foreground">
+                No prior versions yet. Update this prompt to start building history.
+              </div>
+            )}
+          </aside>
+
+          <div className="flex flex-col min-h-0">
+            <div className="px-5 py-3 border-b border-border flex items-center justify-between bg-surface">
+              <span className="font-mono-ui text-xs text-muted-foreground">
+                {active.isCurrent ? "current fields" : "preview of this version"}
+              </span>
+              {!active.isCurrent && "idx" in active && (
+                <button
+                  onClick={() => onRestore(active.idx as number)}
+                  className="font-mono-ui text-xs uppercase tracking-wider px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:opacity-90"
+                >
+                  restore this version
+                </button>
+              )}
+            </div>
+            <pre className="p-5 overflow-auto text-sm font-mono-ui whitespace-pre-wrap leading-relaxed flex-1">
+              {activePreview.trim() || (
+                <span className="text-muted-foreground italic">Empty prompt.</span>
+              )}
+            </pre>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
