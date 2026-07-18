@@ -213,6 +213,14 @@
   --grain-opacity: 0;
 }
 
+/* Keep the picker geometry stable while colors preview on hover. */
+.mode-picker {
+  --font-display: "Instrument Serif", serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  font-family: var(--font-body);
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
