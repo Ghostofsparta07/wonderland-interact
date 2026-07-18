@@ -263,12 +263,8 @@ function Studio() {
 function ModePicker({ onPick }: { onPick: (m: ModeId) => void }) {
   const [hover, setHover] = useState<ModeId | null>(null);
 
-  useEffect(() => {
-    document.documentElement.setAttribute("data-mode", hover ?? "default");
-  }, [hover]);
-
   return (
-    <div className="min-h-screen relative flex flex-col">
+    <div data-mode={hover ?? "default"} className="mode-picker min-h-screen relative flex flex-col bg-background text-foreground transition-colors duration-500">
       <div className="grain-overlay" />
       <header className="px-6 md:px-12 pt-8 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -311,9 +307,9 @@ function ModePicker({ onPick }: { onPick: (m: ModeId) => void }) {
                 onMouseEnter={() => setHover(id)}
                 onFocus={() => setHover(id)}
                 onClick={() => onPick(id)}
-                className={`group text-left relative overflow-hidden rounded-lg border p-6 min-h-[280px] flex flex-col justify-between transition-[transform,border-color,box-shadow] duration-300 ${
+                className={`group text-left relative overflow-hidden rounded-lg border p-6 min-h-[280px] flex flex-col justify-between transition-[border-color,box-shadow,background-color] duration-300 ${
                   active
-                    ? "border-primary bg-surface scale-[1.02] shadow-2xl"
+                    ? "border-primary bg-surface shadow-2xl"
                     : "border-border bg-surface/50 hover:border-primary/50"
                 }`}
               >
