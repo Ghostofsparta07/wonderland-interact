@@ -298,7 +298,10 @@ function ModePicker({ onPick }: { onPick: (m: ModeId) => void }) {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div
+          className="grid grid-cols-1 md:grid-cols-5 gap-3"
+          onMouseLeave={() => setHover(null)}
+        >
           {MODE_ORDER.map((id, i) => {
             const m = MODES[id];
             const active = hover === id;
@@ -306,14 +309,13 @@ function ModePicker({ onPick }: { onPick: (m: ModeId) => void }) {
               <button
                 key={id}
                 onMouseEnter={() => setHover(id)}
-                onMouseLeave={() => setHover(null)}
+                onFocus={() => setHover(id)}
                 onClick={() => onPick(id)}
-                className={`group text-left relative overflow-hidden rounded-lg border p-6 min-h-[280px] flex flex-col justify-between transition-all duration-500 ${
+                className={`group text-left relative overflow-hidden rounded-lg border p-6 min-h-[280px] flex flex-col justify-between transition-[transform,border-color,box-shadow] duration-300 ${
                   active
                     ? "border-primary bg-surface scale-[1.02] shadow-2xl"
                     : "border-border bg-surface/50 hover:border-primary/50"
                 }`}
-                style={{ transitionDelay: `${i * 30}ms` }}
               >
                 <div>
                   <div className="text-4xl mb-4 text-primary">{m.icon}</div>
